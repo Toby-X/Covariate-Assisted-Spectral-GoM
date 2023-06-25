@@ -37,7 +37,7 @@ A_t = Pi%*%t(Theta)
 X_t = Pi%*%t(M)
 
 A = matrix(rbinom(N*p,1,A_t),nrow = N)
-X = X_t + matrix(rnorm(N*r,0,.1),nrow=N)
+X = X_t + matrix(rnorm(N*r,0,1),nrow=N)
 
 ## tuning parameter
 alpha = .1
@@ -72,12 +72,28 @@ for (i in 1:N) {
   if (result.cov[i] == 2){
     result.cov[i] = 1
   } else if (result.cov[i] == 1){
-    result.cov[i] = 3
-  } else{
     result.cov[i] = 2
+  } else{
+    result.cov[i] = 3
   }
 }
 mean(kmeans.cov$cluster==result.cov)
+
+## Concatenate
+L.conc = cbind(A,X)
+svd.conc = svds(L.conc,K)
+kmeans.conc = kmeans(svd.conc$u,K,algorithm = "Lloyd",nstart=10,iter.max=100)
+result.conc = apply(Pi,1,which.max)
+for (i in 1:N) {
+  if (result.conc[i] == 2){
+    result.conc[i] = 1
+  } else if (result.conc[i] == 1){
+    result.conc[i] = 3
+  } else {
+    result.conc[i] = 2
+  }
+}
+mean(kmeans.all$cluster==result.all)
 
 ## Diagonal Deletion + Covariate
 L.all = Diag.fill(L.cov,0)
