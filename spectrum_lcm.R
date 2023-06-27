@@ -7,7 +7,7 @@ library(Rfast)
 K = 3
 N = 500
 p = N/50
-r = 10
+r = 2
 Pi = matrix(rep(0,N*K),nrow=N)
 Theta = matrix(rep(0,p*K),ncol=K)
 M = matrix(rnorm(r*K),nrow=r)
@@ -93,20 +93,63 @@ for (i in 1:N) {
     result.conc[i] = 2
   }
 }
-mean(kmeans.all$cluster==result.all)
+mean(kmeans.conc$cluster==result.conc)
 
 ## Diagonal Deletion + Covariate
+L.cov = mat.mult(A,transpose(A))+alpha*mat.mult(X,transpose(X))
 L.all = Diag.fill(L.cov,0)
 evd.all = eigs(L.all,k=K)
 kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 10,iter.max = 100)
 result.all = apply(Pi,1,which.max)
 for (i in 1:N) {
   if (result.all[i] == 2){
-    result.all[i] = 3
-  } else if (result.all[i] == 1){
     result.all[i] = 2
+  } else if (result.all[i] == 1){
+    result.all[i] = 3
   } else{
     result.all[i] = 1
   }
 }
 mean(kmeans.all$cluster==result.all)
+
+# superiority appears when r is small
+
+## Diagonal Deletion for X
+LX = mat.mult(X,transpose(X))
+LX = Diag.fill(LX,0)
+evd.X = eigs(LX,K)
+kmeans.X = kmeans(evd.X$vectors,K,algorithm = "Lloyd", nstart = 10, iter.max = 100)
+result.X = apply(Pi,1,which.max)
+for (i in 1:N) {
+  if (result.X[i] == 2){
+    result.X[i] = 1
+  } else if (result.X[i] == 1){
+    result.X[i] = 3
+  } else{
+    result.X[i] = 2
+  }
+}
+mean(kmeans.X$cluster==result.X)
+
+## parameter tuning
+AA = mat.mult(A,transpose(A))
+AA = Diag.fill(AA,0)
+XX = mat.mult(X,transpose(X))
+XX = Diag.fill(XX,0)
+AA.svd = svds(AA,K+1)
+XX.svd = svds(XX,K+1)
+alpha_min = (AA.svd$d[K]-AA.svd$d[K+1])/XX.svd$d[1]
+if (r<K){
+  alpha_max = (AA.svd$d[1])/(XX.svd$d[r])
+} else {
+  alpha_max = (AA.svd$d[1])/(XX.svd$d[K]-XX.svd$d[K+1])
+}
+alpha_seq = seq(from=alpha_min,to=alpha_max,length=500)
+within_var = rep(0,length(alpha_seq))
+for (i in 1:length(alpha_seq)) {
+  L.cov = mat.mult(A,transpose(A))+alpha_seq[i]*mat.mult(X,transpose(X))
+  L.all = Diag.fill(L.cov,0)
+  evd.all = eigs(L.all,k=K)
+  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 10,iter.max = 100)
+  within_var[i] = kmeans.all$tot.withinss
+}
