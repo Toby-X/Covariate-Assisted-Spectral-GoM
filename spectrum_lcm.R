@@ -49,9 +49,11 @@ kmeans.null = kmeans(svd.null$u,K,algorithm = "Lloyd", nstart=10,iter.max = 100)
 result.null = apply(Pi,1,which.max)
 for (i in 1:N) {
   if (result.null[i] == 1){
-    result.null[i] = 2
+    result.null[i] = 3
   } else if (result.null[i] == 2){
     result.null[i] = 1
+  } else {
+    result.null[i] = 2
   }
 }
 mean(kmeans.null$cluster==result.null)
@@ -61,6 +63,15 @@ L.del = Diag.fill(L.null)
 svd.del = eigs(L.del,k=K)
 kmeans.del = kmeans(svd.del$vectors,K,algorithm = "Lloyd", nstart=10,iter.max = 100)
 result.del = apply(Pi,1,which.max)
+for (i in 1:N) {
+  if (result.del[i] == 1){
+    result.del[i] = 3
+  } else if (result.del[i] == 2){
+    result.del[i] = 2
+  } else {
+    result.del[i] = 1
+  }
+}
 mean(kmeans.del$cluster==result.del)
 
 ## Covariate
@@ -68,15 +79,15 @@ L.cov = mat.mult(A,transpose(A))+alpha*mat.mult(X,transpose(X))
 evd.cov = eigs(L.cov,k=K)
 kmeans.cov = kmeans(evd.cov$vectors,K,algorithm = "Lloyd", nstart = 10,iter.max = 100)
 result.cov = apply(Pi,1,which.max)
-for (i in 1:N) {
-  if (result.cov[i] == 2){
-    result.cov[i] = 1
-  } else if (result.cov[i] == 1){
-    result.cov[i] = 2
-  } else{
-    result.cov[i] = 3
-  }
-}
+# for (i in 1:N) {
+#   if (result.cov[i] == 2){
+#     result.cov[i] = 1
+#   } else if (result.cov[i] == 1){
+#     result.cov[i] = 2
+#   } else{
+#     result.cov[i] = 3
+#   }
+# }
 mean(kmeans.cov$cluster==result.cov)
 
 ## Concatenate
@@ -84,15 +95,15 @@ L.conc = cbind(A,X)
 svd.conc = svds(L.conc,K)
 kmeans.conc = kmeans(svd.conc$u,K,algorithm = "Lloyd",nstart=10,iter.max=100)
 result.conc = apply(Pi,1,which.max)
-for (i in 1:N) {
-  if (result.conc[i] == 2){
-    result.conc[i] = 1
-  } else if (result.conc[i] == 1){
-    result.conc[i] = 3
-  } else {
-    result.conc[i] = 2
-  }
-}
+# for (i in 1:N) {
+#   if (result.conc[i] == 2){
+#     result.conc[i] = 1
+#   } else if (result.conc[i] == 1){
+#     result.conc[i] = 3
+#   } else {
+#     result.conc[i] = 2
+#   }
+# }
 mean(kmeans.conc$cluster==result.conc)
 
 ## Diagonal Deletion + Covariate
@@ -103,9 +114,9 @@ kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 10,iter.max 
 result.all = apply(Pi,1,which.max)
 for (i in 1:N) {
   if (result.all[i] == 2){
-    result.all[i] = 2
-  } else if (result.all[i] == 1){
     result.all[i] = 3
+  } else if (result.all[i] == 1){
+    result.all[i] = 2
   } else{
     result.all[i] = 1
   }
@@ -122,11 +133,11 @@ kmeans.X = kmeans(evd.X$vectors,K,algorithm = "Lloyd", nstart = 10, iter.max = 1
 result.X = apply(Pi,1,which.max)
 for (i in 1:N) {
   if (result.X[i] == 2){
-    result.X[i] = 1
+    result.X[i] = 2
   } else if (result.X[i] == 1){
     result.X[i] = 3
   } else{
-    result.X[i] = 2
+    result.X[i] = 1
   }
 }
 mean(kmeans.X$cluster==result.X)

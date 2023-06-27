@@ -4,6 +4,7 @@ library(Rfast)
 library(Matrix)
 library(gtools)
 library(sirt)
+library(tictoc)
 
 ## data generation
 K = 3
@@ -28,6 +29,7 @@ theta_gen <- function(theta,K){
 set.seed(230625)
 Pi = t(apply(Pi,1,pi_gen,K=K))
 Theta = t(apply(Theta,1,theta_gen,K=K))
+Pi[1:K,] = diag(rep(1,K))
 
 A_t = Pi%*%t(Theta)
 X_t = Pi%*%t(M)
@@ -125,7 +127,9 @@ cov_cluster <- function(A,X,K,alpha,r,q,e,eps=1e-3){
 r = 10
 q = .05
 e = .05
+tic()
 res.null = null_cluster(A,K,r,q,e)
+toc()
 idx.null = idx.all[1,]
 l1.null = norm(Pi-res.null$Pi[,idx.all[1,]],"1")
 for (i in 2:nrow(idx.all)) {
@@ -158,7 +162,9 @@ l1.cov
 l2.cov
 linfty.cov
 
+tic()
 res.jml = gom.jml(data.frame(A),K)
+toc()
 idx.jml = idx.all[1,]
 l1.jml = norm(Pi-res.jml$g[,idx.all[1,]],"1")
 for (i in 2:nrow(idx.all)) {
@@ -174,6 +180,7 @@ l1.jml
 l2.jml
 linfty.jml
 
+tic()
 AA = mat.mult(A,transpose(A))
 AA = Diag.fill(AA,0)
 XX = mat.mult(X,transpose(X))
@@ -187,19 +194,22 @@ if (R<K){
   alpha_max = (AA.svd$d[1])/(XX.svd$d[K]-XX.svd$d[K+1])
 }
 alpha_seq = seq(from=alpha_min,to=alpha_max,length=100)# fail sometimes
-alpha_seq = seq(from=alpha_min,to=2,length=100)
+alpha_seq = seq(from=.05,to=1,length=100)
 within_var = rep(0,length(alpha_seq))
 for (i in 1:length(alpha_seq)) {
   L.cov = mat.mult(A,transpose(A))+alpha_seq[i]*mat.mult(X,transpose(X))
   L.all = Diag.fill(L.cov,0)
   evd.all = eigs(L.all,k=K)
-  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 10,iter.max = 100)
+  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 2,iter.max = 100)
   within_var[i] = kmeans.all$tot.withinss
 }
+toc()
 plot(alpha_seq,within_var)
-alpha = 0.65
+alpha = 0.15
 
+tic()
 res.cov = cov_cluster(A,X,K,alpha,r,q,e)
+toc()
 idx.cov = idx.all[1,]
 l1.cov = norm(Pi-res.cov$Pi[,idx.all[1,]],"1")
 for (i in 2:nrow(idx.all)) {
