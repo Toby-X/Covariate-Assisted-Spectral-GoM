@@ -5,6 +5,9 @@ library(Matrix)
 library(gtools)
 library(sirt)
 library(tictoc)
+library(future.apply)
+# source("gom_jml_mod.R")
+plan(multisession)
 
 ## data generation
 K = 3
@@ -123,6 +126,19 @@ cov_cluster <- function(A,X,K,alpha,r,q,e,eps=1e-3){
   return(list(Pi=Pi,Theta=Theta,S=S))
 }
 
+find_best_idx <- function(idx,Pi,Pi.r,type="1"){
+  norm(Pi.r-Pi[,idx],type = type)
+}
+
+find_best_alpha <- function(alpha,A,X,nstart,iter.max){
+  L.cov = mat.mult(A,transpose(A))+alpha*mat.mult(X,transpose(X))
+  L.all = Diag.fill(L.cov,0)
+  evd.all = eigs(L.all,k=K)
+  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = nstart,iter.max = iter.max)
+  within_var[i] = kmeans.all$tot.withinss
+  return(kmeans.all$tot.withinss)
+}
+
 ## diag deletion
 r = 10
 q = .05
@@ -130,15 +146,9 @@ e = .05
 tic()
 res.null = null_cluster(A,K,r,q,e)
 toc()
-idx.null = idx.all[1,]
-l1.null = norm(Pi-res.null$Pi[,idx.all[1,]],"1")
-for (i in 2:nrow(idx.all)) {
-  l1.tmp = norm(Pi-res.null$Pi[,idx.all[i,]],"1")
-  if (l1.tmp < l1.null){
-    l1.null = l1.tmp
-    idx.null = idx.all[i,]
-  }
-}
+idx.null = future_apply(idx.all,1,find_best_idx,Pi=res.null$Pi,Pi.r=Pi)
+idx.null = which.min(idx.null)
+l1.null = norm(Pi-res.null$Pi[,idx.null],"1")
 l2.null = norm(Pi-res.null$Pi[,idx.null],"2")
 linfty.null = max(abs(Pi-res.null$Pi[,idx.null]))
 l1.null
@@ -147,15 +157,9 @@ linfty.null
 
 alpha = .1
 res.cov = cov_cluster(A,X,K,alpha,r,q,e)
-idx.cov = idx.all[1,]
-l1.cov = norm(Pi-res.cov$Pi[,idx.all[1,]],"1")
-for (i in 2:nrow(idx.all)) {
-  l1.tmp = norm(Pi-res.cov$Pi[,idx.all[i,]],"1")
-  if (l1.tmp < l1.cov){
-    l1.cov = l1.tmp
-    idx.cov = idx.all[i,]
-  }
-}
+idx.cov = future_apply(idx.all,1,find_best_idx,Pi=res.cov$Pi,Pi.r=Pi)
+idx.cov = which.min(idx.cov)
+l1.cov = norm(Pi-res.cov$Pi[,idx.cov],"1")
 l2.cov = norm(Pi-res.cov$Pi[,idx.cov],"2")
 linfty.cov = max(abs(Pi-res.cov$Pi[,idx.cov]))
 l1.cov
@@ -165,17 +169,11 @@ linfty.cov
 tic()
 res.jml = gom.jml(data.frame(A),K)
 toc()
-idx.jml = idx.all[1,]
-l1.jml = norm(Pi-res.jml$g[,idx.all[1,]],"1")
-for (i in 2:nrow(idx.all)) {
-  l1.tmp = norm(Pi-res.jml$g[,idx.all[i,]],"1")
-  if (l1.tmp < l1.jml){
-    l1.jml = l1.tmp
-    idx.jml = idx.all[i,]
-  }
-}
-l2.jml = norm(Pi-res.jml$g[,idx.jml],"2")
-linfty.jml = max(abs(Pi-res.jml$g[,idx.jml]))
+idx.jml = future_apply(idx.all,1,find_best_idx,Pi=res.jml$Pi,Pi.r=Pi)
+idx.jml = which.min(idx.jml)
+l1.jml = norm(Pi-res.jml$Pi[,idx.jml],"1")
+l2.jml = norm(Pi-res.jml$Pi[,idx.jml],"2")
+linfty.jml = max(abs(Pi-res.jml$Pi[,idx.jml]))
 l1.jml
 l2.jml
 linfty.jml
@@ -200,18 +198,20 @@ for (i in 1:length(alpha_seq)) {
   L.cov = mat.mult(A,transpose(A))+alpha_seq[i]*mat.mult(X,transpose(X))
   L.all = Diag.fill(L.cov,0)
   evd.all = eigs(L.all,k=K)
-  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 2,iter.max = 100)
+  kmeans.all = kmeans(evd.all$vectors,K,algorithm = "Lloyd", nstart = 3,iter.max = 100)
   within_var[i] = kmeans.all$tot.withinss
 }
 toc()
 plot(alpha_seq,within_var)
 alpha = 0.15
 
+within_var = future_sapply(alpha_seq,find_best_alpha,A,X,3,100,future.seed=T)
+
 tic()
 res.cov = cov_cluster(A,X,K,alpha,r,q,e)
 toc()
 idx.cov = idx.all[1,]
-l1.cov = norm(Pi-res.cov$Pi[,idx.all[1,]],"1")
+l1.cov = norm(Pi-res.cov$Pi,"1")
 for (i in 2:nrow(idx.all)) {
   l1.tmp = norm(Pi-res.cov$Pi[,idx.all[i,]],"1")
   if (l1.tmp < l1.cov){
@@ -224,3 +224,44 @@ linfty.cov = max(abs(Pi-res.cov$Pi[,idx.cov]))
 l1.cov
 l2.cov
 linfty.cov
+
+com_accuracy_l1 <- function(alpha){
+  res.cov = cov_cluster(A,X,K,alpha,r,q,e,eps=1e-3)
+  l1.cov = norm(Pi-res.cov$Pi,"1")
+  for (i in 2:nrow(idx.all)) {
+    l1.tmp = norm(Pi-res.cov$Pi[,idx.all[i,]],"1")
+    if (l1.tmp < l1.cov){
+      l1.cov = l1.tmp
+    }
+  }
+  return(l1.cov)
+}
+
+com_accuracy_l2 <- function(alpha){
+  res.cov = cov_cluster(A,X,K,alpha,r,q,e,eps=1e-3)
+  l2.cov = norm(Pi-res.cov$Pi,"2")
+  for (i in 2:nrow(idx.all)) {
+    l2.tmp = norm(Pi-res.cov$Pi[,idx.all[i,]],"2")
+    if (l2.tmp < l2.cov){
+      l2.cov = l2.tmp
+    }
+  }
+  return(l2.cov)
+}
+
+res.cv = future_sapply(alpha_seq,com_accuracy_l1,future.seed = T)
+plot(alpha_seq,res.cv,"l")
+res.cv2 = future_sapply(alpha_seq,com_accuracy_l2,future.seed = T)
+plot(alpha_seq,res.cv2,"l")
+plot(alpha_seq,within_var,"l")
+
+dat = cbind(within_var,res.cv,res.cv2)
+std_max = function(l){
+  return((l-min(l))/(max(l)-min(l)))
+}
+dat = apply(dat,2,std_max)
+dat = data.frame(cbind(alpha_seq,dat))
+colnames(dat) = c("alpha","Var","L1","L2")
+dat = dat %>% pivot_longer("Var":"L2",names_to = "type", values_to = "value")
+ggplot(data=dat)+
+  geom_line(aes(x=alpha,y=value,col=type))
