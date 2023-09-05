@@ -1,6 +1,7 @@
 ## Here I use doSNOW to perform parallel computing
 ## Put this file and GoM_spectra.R into the same folder
 install.packages(setdiff(c("doSNOW","tictoc"), rownames(installed.packages())))
+library(doSNOW)
 source("GoM_spectra.R")
 ## gtools is used to generate dirichlet distribution, other package is the same
 library(gtools)
@@ -14,8 +15,8 @@ cl = makeCluster(numCores)
 registerDoSNOW(cl)
 
 ## given values
-K.all = c(3,8)
-N.all = c(200,500,1000,2000,5000)
+# K.all = c(3,8)
+# N.all = c(200,500,1000,2000,5000)
 # J = N/10, W = N/20
 m = 100 #parallel experiments
 
@@ -31,6 +32,7 @@ GoM_simulate <- function(A,X,K,Pi,Theta){
   tic()
   jml.est = gom.jml(data.frame(A),K)
   jml.time = toc()
+  jml.time = jml.time$toc-jml.time$tic
   Pi.jml = as.matrix(jml.est$g)
   Theta.jml = as.matrix(jml.est$lambda[,3:(K+2)])
   idx.jml = find_best_idx(K,Pi.jml,Pi)
@@ -41,9 +43,19 @@ GoM_simulate <- function(A,X,K,Pi,Theta){
   tic()
   null.est = gom.svd(A,K)
   svd.time = toc()
+  svd.time = svd.time$toc-svd.time$tic
   idx.null = find_best_idx(K,null.est$Pi,Pi)
   pi.err.svd = mean(abs(null.est$Pi[,idx.null]-Pi))
   theta.err.svd = mean(abs(null.est$Theta[,idx.null]-Theta))
+  
+  ## Deleted Version
+  tic()
+  del.est = gom.cov(A,X,K,0) # actually longer version, X don't need to calculate
+  del.time = toc()
+  del.time = del.time$toc-del.time$tic
+  idx.del = find_best_idx(K,del.est$Pi,Pi)
+  pi.err.del = mean(abs(del.est$Pi[,idx.del]-Pi))
+  theta.err.del = mean(abs(del.est$Theta[,idx.del]-Theta))
   
   ## Covariate-assisted include the time of finding alpha
   ## the tuning params are all set as follows
@@ -52,6 +64,7 @@ GoM_simulate <- function(A,X,K,Pi,Theta){
   alpha = find_best_alpha(alpha_seq,A,X,K)
   cov.est = gom.cov(A,X,K,alpha)
   cov.time = toc()
+  cov.time = cov.time$toc-cov.time$tic
   idx.cov = find_best_idx(K,cov.est$Pi,Pi)
   pi.err.cov = mean(abs(cov.est$Pi[,idx.cov]-Pi))
   theta.err.cov = mean(abs(cov.est$Theta[,idx.null]-Theta))
@@ -59,14 +72,14 @@ GoM_simulate <- function(A,X,K,Pi,Theta){
   res = list(jml.pi=pi.err.jml, jml.theta=theta.err.jml, jml.time=jml.time,
              svd.pi=pi.err.svd, svd.theta=theta.err.svd, svd.time=svd.time,
              cov.pi=pi.err.cov, cov.theta=theta.err.cov, cov.time=cov.time,
+             del.pi=pi.err.del, del.theta=theta.err.del, del.time=del.time,
              alpha=alpha)
   # alpha is also returned to check if the range is good enough
   return(res)
 }
 
-res0 = GoM_simulate(A,X,K,Pi,Theta)
-
-res_N200_K3 = foreach(I=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+# N=200,K=3 Simulation
+res_N200_K3 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
   set.seed(i)
   N = 200
   K = 3
@@ -74,91 +87,518 @@ res_N200_K3 = foreach(I=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc
   W = N/20
   
   # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
   Pi = t(apply(Pi,1,pi_gen,K=K))
-  Theta = matrix(runif(p*K),ncol=K)
-  M = matrix(rnorm(R*K,0,1),nrow=R)
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
   Pi[1:K,] = diag(rep(1,K))
   
   A_t = Pi%*%t(Theta)
   X_t = Pi%*%t(M)
   
-  A = matrix(rbinom(N*p,1,A_t),nrow = N)
-  X = X_t + matrix(rnorm(N*R,0,.5),nrow=N)
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
   X = apply(X,2,scale)
   
-              }
-
-null.time = jml.time = cov.time = array(rep(0,10*length(K.all)*length(R.all)*length(N.all)),c(length(K.all),length(R.all),length(N.all),10))
-metric.null = metric.jml = metric.cov = array(rep(0,10*length(K.all)*length(R.all)*length(N.all)),c(length(K.all),length(R.all),length(N.all),10))
-
-for (iter.K in 1:length(K.all)) {
-  K = K.all[iter.K]
-  cat("K=",K,"\n")
-  for (iter.R in 1:length(R.all)) {
-    R = R.all[iter.R]
-    cat("R=",R,"\n")
-    for (iter.N in 1:length(N.all)) {
-      N = N.all[iter.N]
-      p = N/5
-      cat("N=",N,"\n")
-      for (l in 1:10) {
-        set.seed(l)
-        idx.all = permutation(1:K)
-        Pi = matrix(rep(0,N*K),nrow=N)
-        Pi = t(apply(Pi,1,pi_gen,K=K))
-        Theta = matrix(runif(p*K),ncol=K)
-        M = matrix(rnorm(R*K),nrow=R)
-        Pi[1:K,] = diag(rep(1,K))
-        
-        A_t = Pi%*%t(Theta)
-        X_t = Pi%*%t(M)
-        
-        A = matrix(rbinom(N*p,1,A_t),nrow = N)
-        X = X_t + matrix(rnorm(N*R,0,.7),nrow=N)
-        
-        start.time = Sys.time()
-        res.null = null_cluster(A,K)
-        end.time = Sys.time()
-        null.time[iter.K,iter.R,iter.N,l] = end.time-start.time
-        idx.null = apply(idx.all,1,find_best_idx,Pi=res.null$Pi,Pi.r=Pi)
-        idx.null = which.min(idx.null)
-        idx.null = idx.all[idx.null,]
-        metric.null[iter.K,iter.R,iter.N,l] = mean(abs(Pi-res.null$Pi[,idx.null]))
-        
-        start.time = Sys.time()
-        res.jml = gom.jml(data.frame(A),K)
-        end.time = Sys.time()
-        jml.time[iter.K,iter.R,iter.N,l] = end.time-start.time
-        idx.jml = apply(idx.all,1,find_best_idx,Pi=data.matrix(res.jml$g),Pi.r=Pi)
-        idx.jml = which.min(idx.jml)
-        idx.jml = idx.all[idx.jml,]
-        metric.jml[iter.K,iter.R,iter.N,l] = mean(abs(Pi-res.jml$g[,idx.jml]))
-        
-        start.time = Sys.time()
-        AA = mat.mult(A,transpose(A))
-        AA = Diag.fill(AA,0)
-        XX = mat.mult(X,transpose(X))
-        XX = Diag.fill(XX,0)
-        AA.evd = eigs(AA,K+1)
-        XX.evd = eigs(XX,K+1)
-        alpha_min = (AA.evd$values[K]-AA.evd$values[K+1])/XX.evd$values[1]
-        if (R<K){
-          alpha_max = AA.evd$values[K]/XX.evd$values[R]
-        } else {
-          alpha_max = (AA.evd$values[K])/(XX.evd$values[K]-XX.evd$values[K+1])
-        }
-        alpha_seq = seq(from=alpha_min,to=alpha_max,length=100)# fail sometimes
-        err = future_sapply(alpha_seq,find_best_alpha,A,X,K,future.seed=T)
-        alpha = alpha_seq[which.min(err)]
-        res.cov = cov_cluster(A,X,K,alpha)
-        end.time = Sys.time()
-        cov.time[iter.K,iter.R,iter.N,l] = end.time-start.time
-        l1.cov = apply(idx.all,1,find_best_idx,Pi=res.cov$Pi,Pi.r=Pi)
-        idx.cov = idx.all[which.min(l1.cov),]
-        metric.cov[iter.K,iter.R,iter.N,l] = mean(abs(Pi-res.cov$Pi[,idx.cov]))
-      }
-    }
-  }
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
 }
 
-save.image("Simulation1.RData")
+# N=500,K=3 Simulation
+res_N500_K3 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 500
+  K = 3
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=1000,K=3 Simulation
+res_N1000_K3 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 1000
+  K = 3
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=2000,K=3 Simulation
+res_N2000_K3 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 2000
+  K = 3
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=5000,K=3 Simulation
+res_N5000_K3 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 5000
+  K = 3
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=200,K=8 Simulation
+res_N200_K8 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 200
+  K = 8
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=500,K=8 Simulation
+res_N500_K8 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 500
+  K = 8
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=1000,K=8 Simulation
+res_N1000_K8 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 1000
+  K = 8
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=2000,K=8 Simulation
+res_N2000_K8 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 2000
+  K = 8
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=5000,K=8 Simulation
+res_N5000_K8 = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 5000
+  K = 8
+  J = N/10
+  W = N/20
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+## Long J scenario
+## J = 10N, W = 5N
+
+# N=200,K=3 Simulation
+res_N200_K3_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 200
+  K = 3
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=500,K=3 Simulation
+res_N500_K3_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 500
+  K = 3
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=1000,K=3 Simulation
+res_N1000_K3_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 1000
+  K = 3
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=2000,K=3 Simulation
+res_N2000_K3_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 2000
+  K = 3
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=5000,K=3 Simulation
+res_N5000_K3_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 5000
+  K = 3
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=200,K=8 Simulation
+res_N200_K8_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 200
+  K = 8
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=500,K=8 Simulation
+res_N500_K8_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 500
+  K = 8
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=1000,K=8 Simulation
+res_N1000_K8_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 1000
+  K = 8
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=2000,K=8 Simulation
+res_N2000_K8_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 2000
+  K = 8
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+# N=5000,K=8 Simulation
+res_N5000_K8_long = foreach(i=1:m,.combine=rbind,.packages = c("sirt","gtools","tictoc")) %dopar% {
+  set.seed(i)
+  N = 5000
+  K = 8
+  J = N*10
+  W = N*5
+  
+  # generate values
+  Pi = matrix(rep(0,N*K),nrow=N)
+  Pi = t(apply(Pi,1,pi_gen,K=K))
+  Theta = matrix(runif(J*K),ncol=K)
+  M = matrix(rnorm(W*K,0,1),nrow=W)
+  Pi[1:K,] = diag(rep(1,K))
+  
+  A_t = Pi%*%t(Theta)
+  X_t = Pi%*%t(M)
+  
+  A = matrix(rbinom(N*J,1,A_t),nrow = N)
+  X = X_t + matrix(rnorm(N*W,0,.5),nrow=N)
+  X = apply(X,2,scale)
+  
+  res = GoM_simulate(A,X,K,Pi,Theta)
+  return(res)
+}
+
+save.image("GoM_simulation.RData")
